@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Webcam Broadcaster</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; }
+        video { width: 100%; max-width: 800px; border-radius: 8px; background: #000; }
+    </style>
+</head>
+<body>
+    <h2>Host: Broadcasting...</h2>
+    <video playsinline autoplay muted></video>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const peerConnections = {};
+        const video = document.querySelector('video');
+        const socket = io.connect(window.location.origin);
+        
+        const config = {
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+        };
+
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                video.srcObject = stream;
+                socket.emit("broadcaster");
+            })
+            .catch(error => console.error("Error accessing media devices.", error));
+
+        socket.on("watcher", id => {
+            // Clean up any lingering zombie connection for this ID just in case
+            if (peerConnections[id]) {
+                peerConnections[id].close();
+            }
+
+            const peerConnection = new RTCPeerConnection(config);
+            peerConnections[id] = peerConnection;
+
+            let stream = video.srcObject;
+            if (stream) {
+                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+            }
+
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit("candidate", id, event.candidate);
+                }
+            };
+
+            peerConnection
+                .createOffer()
+                .then(sdp => peerConnection.setLocalDescription(sdp))
+                .then(() => socket.emit("offer", id, peerConnection.localDescription))
+                .catch(err => console.error("Error creating offer:", err));
+        });
+
+        socket.on("answer", (id, description) => {
+            if (peerConnections[id]) {
+                peerConnections[id].setRemoteDescription(description)
+                    .catch(err => console.error("Error setting remote description:", err));
+            }
+        });
+
+        socket.on("candidate", (id, candidate) => {
+            if (peerConnections[id]) {
+                peerConnections[id].addIceCandidate(new RTCIceCandidate(candidate))
+                    .catch(e => console.error("Error adding ice candidate:", e));
+            }
+        });
+
+        socket.on("disconnectPeer", id => {
+            if (id && peerConnections[id]) {
+                peerConnections[id].close();
+                delete peerConnections[id];
+                console.log(`Cleaned up peer connection for: ${id}`);
+            } else if (!id) {
+                // Broadcaster shutdown case
+                Object.keys(peerConnections).forEach(peerId => {
+                    peerConnections[peerId].close();
+                    delete peerConnections[peerId];
+                });
+            }
+        });
+
+        window.onunload = window.onbeforeunload = () => {
+            socket.close();
+        };
+    </script>
+</body>
+</html>
