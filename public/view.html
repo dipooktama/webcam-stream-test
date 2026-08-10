@@ -208,7 +208,7 @@
         function watchStream(broadcasterId, streamName) {
             activeBroadcasterId = broadcasterId;
             currentStreamTitle.innerText = streamName;
-            chatMessages.innerHTML = ""; // Clear old chat history
+            chatMessages.innerHTML = "";
 
             selectionView.classList.add('hidden');
             playerView.classList.remove('hidden');
@@ -233,7 +233,7 @@
                 const p = document.createElement('p');
                 p.innerHTML = `<span class="author">${data.name}:</span> ${data.text}`;
                 chatMessages.appendChild(p);
-                chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll
+                chatMessages.scrollTop = chatMessages.scrollHeight;
             }
         });
 
@@ -260,17 +260,27 @@
             if (peerConnection) peerConnection.close();
 
             peerConnection = new RTCPeerConnection(config);
-            peerConnection.ontrack = event => {remoteVideo.srcObject = event.streams[0]; remoteVideo.play().catch(e => console.error(e));};
-            peerConnection.onicecandidate = event => {if (event.candidate) socket.emit("candidate", id, event.candidate);};
+            peerConnection.ontrack = event => {
+                remoteVideo.srcObject = event.streams[0];
+                remoteVideo.play().catch(e => console.error("Autoplay prevented:", e));
+            };
+
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) socket.emit("candidate", id, event.candidate);
+            };
 
             peerConnection.setRemoteDescription(description)
                 .then(() => peerConnection.createAnswer())
                 .then(sdp => peerConnection.setLocalDescription(sdp))
-                .then(() => socket.emit("answer", id, peerConnection.localDescription));
+                .then(() => socket.emit("answer", id, peerConnection.localDescription))
+                .catch(err => console.error("WebRTC Offer Error:", err)); // Added error catch
         });
 
         socket.on("candidate", (id, candidate) => {
-            if (id === activeBroadcasterId && peerConnection) peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            if (id === activeBroadcasterId && peerConnection) {
+                peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
+                    .catch(e => console.error("ICE Candidate Error:", e)); // Added error catch
+            }
         });
 
         socket.on("disconnectPeer", id => {
