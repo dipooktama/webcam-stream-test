@@ -113,7 +113,14 @@
         const chatMessages = document.getElementById('chatMessages');
         const socket = io.connect(window.location.origin);
 
-        const config = {iceServers: [{urls: "stun:stun.l.google.com:19302"}]};
+        const config = {
+            iceServers: [
+                {urls: "stun:stun.l.google.com:19302"},
+                {urls: "stun:stun1.l.google.com:19302"},
+                {urls: "stun:stun2.l.google.com:19302"}
+            ]
+        };
+
 
         startBtn.addEventListener('click', () => {
             const name = streamNameInput.value.trim() || "Camera Feed";

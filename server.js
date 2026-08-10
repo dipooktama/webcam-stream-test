@@ -29,6 +29,7 @@ io.on('connection', socket => {
             // Join the specific broadcast's chat room
             socket.join(broadcasterId);
             socket.to(broadcasterId).emit('watcher', socket.id);
+            console.log(`Watcher ${socket.id} joined stream ${broadcasterId}`);
         }
     });
 
