@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>Webcam Viewer</title>
+    <title>Live Camera Directory</title>
     <style>
         body {
             font-family: sans-serif;
@@ -13,10 +13,47 @@
             padding: 20px;
         }
 
-        .video-container {
-            position: relative;
-            max-width: 800px;
+        .container {
+            max-width: 700px;
             margin: 0 auto;
+        }
+
+        button {
+            background: #2ea043;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        input {
+            padding: 10px;
+            font-size: 16px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background: #222;
+            color: white;
+            width: calc(100% - 24px);
+            margin-bottom: 15px;
+        }
+
+        .stream-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .stream-card {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         video {
@@ -25,103 +62,214 @@
             background: #000;
         }
 
-        .unmute-btn {
-            margin-top: 12px;
-            padding: 10px 20px;
-            background: #1f6feb;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
+        .hidden {
+            display: none !important;
+        }
+
+        .btn-secondary {
+            background: #30363d;
+            margin-bottom: 15px;
+        }
+
+        /* Chat Styling */
+        .chat-container {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            margin-top: 15px;
+            height: 250px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            padding: 10px;
+            overflow-y: auto;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        .chat-messages p {
+            margin: 5px 0;
+        }
+
+        .chat-messages .author {
             font-weight: bold;
+            color: #58a6ff;
+        }
+
+        .chat-input-area {
+            display: flex;
+            border-top: 1px solid #333;
+            padding: 10px;
+            gap: 10px;
+            background: #161b22;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }
+
+        .chat-input-area input {
+            margin: 0;
+            width: auto;
+            flex-grow: 1;
         }
     </style>
 </head>
 
 <body>
-    <h2>Remote Viewer: Live Feed</h2>
-    <div class="video-container">
-        <!-- 'muted' is required for browsers to allow autoplay on incoming streams -->
-        <video id="remoteVideo" playsinline autoplay muted></video>
-        <br>
-        <button id="unmuteBtn" class="unmute-btn">Unmute Audio</button>
+    <div class="container">
+        <h2>Live Webcams</h2>
+
+        <!-- View 1: Name Input -->
+        <div id="nameView">
+            <h3>Who is watching?</h3>
+            <input type="text" id="viewerNameInput" placeholder="Enter your name">
+            <button id="saveNameBtn" style="width: 100%;">Continue</button>
+        </div>
+
+        <!-- View 2: Channel List -->
+        <div id="selectionView" class="hidden">
+            <p id="noStreamsMsg">No active broadcasts. Start a camera on another device to see it here.</p>
+            <div id="streamList" class="stream-list"></div>
+        </div>
+
+        <!-- View 3: Video Player & Chat -->
+        <div id="playerView" class="hidden">
+            <button id="backBtn" class="btn-secondary">← Back to Channels</button>
+            <h3 id="currentStreamTitle">Stream Feed</h3>
+            <video id="remoteVideo" playsinline autoplay muted></video>
+            <button id="unmuteBtn" class="btn-secondary" style="margin-top:10px;">Unmute Audio</button>
+
+            <div class="chat-container">
+                <div id="chatMessages" class="chat-messages"></div>
+                <div class="chat-input-area">
+                    <input type="text" id="chatInput" placeholder="Type a comment...">
+                    <button id="sendChatBtn">Send</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        let peerConnection = null;
-        const video = document.getElementById('remoteVideo');
-        const unmuteBtn = document.getElementById('unmuteBtn');
         const socket = io.connect(window.location.origin);
 
-        // Expanded STUN servers for cross-network NAT traversal
-        const config = {
-            iceServers: [
-                {urls: "stun:stun.l.google.com:19302"},
-                {urls: "stun:stun1.l.google.com:19302"},
-                {urls: "stun:stun2.l.google.com:19302"}
-            ]
-        };
+        let peerConnection = null;
+        let activeBroadcasterId = null;
+        let viewerName = "Anonymous";
 
-        unmuteBtn.addEventListener('click', () => {
-            video.muted = !video.muted;
-            unmuteBtn.innerText = video.muted ? "Unmute Audio" : "Mute Audio";
+        const nameView = document.getElementById('nameView');
+        const selectionView = document.getElementById('selectionView');
+        const playerView = document.getElementById('playerView');
+        const streamList = document.getElementById('streamList');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const currentStreamTitle = document.getElementById('currentStreamTitle');
+
+        const config = {iceServers: [{urls: "stun:stun.l.google.com:19302"}]};
+
+        // --- STEP 1: Save Name ---
+        document.getElementById('saveNameBtn').addEventListener('click', () => {
+            const inputName = document.getElementById('viewerNameInput').value.trim();
+            if (inputName) viewerName = inputName;
+
+            nameView.classList.add('hidden');
+            selectionView.classList.remove('hidden');
+            socket.emit("getBroadcasters");
         });
 
-        socket.on("connect", () => {
-            socket.emit("watcher");
+        // --- STEP 2: Stream Selection ---
+        socket.on("broadcasterList", list => {
+            streamList.innerHTML = "";
+            if (list.length === 0) {
+                document.getElementById('noStreamsMsg').classList.remove('hidden');
+            } else {
+                document.getElementById('noStreamsMsg').classList.add('hidden');
+                list.forEach(stream => {
+                    const card = document.createElement('div');
+                    card.className = "stream-card";
+                    card.innerHTML = `
+                        <span style="font-size: 18px; font-weight: bold;">🔴 ${stream.name}</span>
+                        <button onclick="watchStream('${stream.id}', '${stream.name}')">Watch Stream</button>
+                    `;
+                    streamList.appendChild(card);
+                });
+            }
         });
 
-        socket.on("broadcaster", () => {
-            socket.emit("watcher");
+        function watchStream(broadcasterId, streamName) {
+            activeBroadcasterId = broadcasterId;
+            currentStreamTitle.innerText = streamName;
+            chatMessages.innerHTML = ""; // Clear old chat history
+
+            selectionView.classList.add('hidden');
+            playerView.classList.remove('hidden');
+
+            socket.emit("watcher", broadcasterId);
+        }
+
+        // --- STEP 3: Chat Logic ---
+        document.getElementById('sendChatBtn').addEventListener('click', sendChat);
+        chatInput.addEventListener('keypress', (e) => {if (e.key === 'Enter') sendChat();});
+
+        function sendChat() {
+            const text = chatInput.value.trim();
+            if (text && activeBroadcasterId) {
+                socket.emit("chatMessage", {broadcasterId: activeBroadcasterId, name: viewerName, text: text});
+                chatInput.value = "";
+            }
+        }
+
+        socket.on("chatMessage", data => {
+            if (data.broadcasterId === activeBroadcasterId) {
+                const p = document.createElement('p');
+                p.innerHTML = `<span class="author">${data.name}:</span> ${data.text}`;
+                chatMessages.appendChild(p);
+                chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll
+            }
+        });
+
+        // --- STEP 4: WebRTC & Cleanup ---
+        document.getElementById('backBtn').addEventListener('click', () => {
+            if (peerConnection) peerConnection.close();
+            peerConnection = null;
+            remoteVideo.srcObject = null;
+
+            socket.emit('leaveStream', activeBroadcasterId);
+            activeBroadcasterId = null;
+
+            playerView.classList.add('hidden');
+            selectionView.classList.remove('hidden');
+        });
+
+        document.getElementById('unmuteBtn').addEventListener('click', (e) => {
+            remoteVideo.muted = !remoteVideo.muted;
+            e.target.innerText = remoteVideo.muted ? "Unmute Audio" : "Mute Audio";
         });
 
         socket.on("offer", (id, description) => {
-            if (peerConnection) {
-                peerConnection.close();
-            }
+            if (id !== activeBroadcasterId) return;
+            if (peerConnection) peerConnection.close();
 
             peerConnection = new RTCPeerConnection(config);
+            peerConnection.ontrack = event => {remoteVideo.srcObject = event.streams[0]; remoteVideo.play().catch(e => console.error(e));};
+            peerConnection.onicecandidate = event => {if (event.candidate) socket.emit("candidate", id, event.candidate);};
 
-            peerConnection.ontrack = event => {
-                video.srcObject = event.streams[0];
-                // Force play and log any browser autoplay restrictions
-                video.play().catch(e => console.error("Autoplay prevented by browser:", e));
-            };
-
-            peerConnection.onicecandidate = event => {
-                if (event.candidate) {
-                    socket.emit("candidate", id, event.candidate);
-                }
-            };
-
-            peerConnection
-                .setRemoteDescription(description)
+            peerConnection.setRemoteDescription(description)
                 .then(() => peerConnection.createAnswer())
                 .then(sdp => peerConnection.setLocalDescription(sdp))
-                .then(() => socket.emit("answer", id, peerConnection.localDescription))
-                .catch(err => console.error("Error handling offer:", err));
+                .then(() => socket.emit("answer", id, peerConnection.localDescription));
         });
 
         socket.on("candidate", (id, candidate) => {
-            if (peerConnection) {
-                peerConnection
-                    .addIceCandidate(new RTCIceCandidate(candidate))
-                    .catch(e => console.error("Error adding ice candidate:", e));
-            }
+            if (id === activeBroadcasterId && peerConnection) peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         });
 
-        socket.on("disconnectPeer", () => {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
-            video.srcObject = null;
+        socket.on("disconnectPeer", id => {
+            if (id === activeBroadcasterId) document.getElementById('backBtn').click();
         });
-
-        window.onunload = window.onbeforeunload = () => {
-            socket.close();
-        };
     </script>
 </body>
 

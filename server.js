@@ -3,59 +3,59 @@ const app = express();
 const http = require('http').Server(app);
 const io = require('socket.io')(http);
 
-const port = process.env.PORT || 3000;
-
+const port = process.env.PORT || 10000;
 app.use(express.static('public'));
 
-let broadcaster = null;
-const watchers = new Set();
+const activeBroadcasters = new Map();
+
+function getBroadcasterList() {
+    return Array.from(activeBroadcasters.values());
+}
 
 io.on('connection', socket => {
-    // 1. Broadcaster registers
-    socket.on('broadcaster', () => {
-        broadcaster = socket.id;
-        socket.broadcast.emit('broadcaster');
-        console.log(`Broadcaster registered: ${broadcaster}`);
+    socket.on('broadcaster', (data) => {
+        const streamName = (data && data.name) ? data.name : `Camera (${socket.id.substring(0, 4)})`;
+        activeBroadcasters.set(socket.id, { id: socket.id, name: streamName });
+        io.emit('broadcasterList', getBroadcasterList());
+        console.log(`Broadcaster registered: "${streamName}"`);
     });
 
-    // 2. Viewer registers desire to watch
-    socket.on('watcher', () => {
-        watchers.add(socket.id);
-        if (broadcaster) {
-            socket.to(broadcaster).emit('watcher', socket.id);
-            console.log(`Watcher connected and requested stream: ${socket.id}`);
+    socket.on('getBroadcasters', () => {
+        socket.emit('broadcasterList', getBroadcasterList());
+    });
+
+    socket.on('watcher', (broadcasterId) => {
+        if (activeBroadcasters.has(broadcasterId)) {
+            // Join the specific broadcast's chat room
+            socket.join(broadcasterId);
+            socket.to(broadcasterId).emit('watcher', socket.id);
         }
     });
 
-    // 3. WebRTC signaling relay
-    socket.on('offer', (id, message) => {
-        socket.to(id).emit('offer', socket.id, message);
+    // Handle leaving the room so chats don't cross over
+    socket.on('leaveStream', (broadcasterId) => {
+        socket.leave(broadcasterId);
     });
 
-    socket.on('answer', (id, message) => {
-        socket.to(id).emit('answer', socket.id, message);
+    // Broadcast chat messages to everyone in the specific stream's room
+    socket.on('chatMessage', (data) => {
+        // data contains: { broadcasterId, name, text }
+        io.to(data.broadcasterId).emit('chatMessage', data);
     });
 
-    socket.on('candidate', (id, message) => {
-        socket.to(id).emit('candidate', socket.id, message);
-    });
+    socket.on('offer', (id, message) => socket.to(id).emit('offer', socket.id, message));
+    socket.on('answer', (id, message) => socket.to(id).emit('answer', socket.id, message));
+    socket.on('candidate', (id, message) => socket.to(id).emit('candidate', socket.id, message));
 
-    // 4. Cleanup on disconnect
     socket.on('disconnect', () => {
-        if (socket.id === broadcaster) {
-            console.log('Broadcaster disconnected.');
-            broadcaster = null;
-            socket.broadcast.emit('disconnectPeer');
-        } else if (watchers.has(socket.id)) {
-            watchers.delete(socket.id);
-            if (broadcaster) {
-                socket.to(broadcaster).emit('disconnectPeer', socket.id);
-            }
-            console.log(`Watcher disconnected: ${socket.id}`);
+        if (activeBroadcasters.has(socket.id)) {
+            activeBroadcasters.delete(socket.id);
+            io.emit('broadcasterList', getBroadcasterList());
+            io.emit('disconnectPeer', socket.id);
+        } else {
+            socket.broadcast.emit('disconnectPeer', socket.id);
         }
     });
 });
 
-http.listen(port, () => {
-    console.log(`Signaling server running on http://localhost:${port}`);
-});
+http.listen(port, () => console.log(`Server running on port ${port}`));

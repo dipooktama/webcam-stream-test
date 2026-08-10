@@ -1,91 +1,166 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Webcam Broadcaster</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; text-align: center; }
-        video { width: 100%; max-width: 800px; border-radius: 8px; background: #000; }
+        body {
+            font-family: sans-serif;
+            background: #121212;
+            color: white;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+            margin-top: 15px;
+        }
+
+        .controls {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        input {
+            padding: 10px;
+            font-size: 16px;
+            border-radius: 6px;
+            border: 1px solid #444;
+            background: #222;
+            color: white;
+            width: 60%;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 6px;
+            border: none;
+            background: #2ea043;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        /* Chat Styling */
+        .chat-container {
+            background: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            margin-top: 15px;
+            height: 200px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            padding: 10px;
+            overflow-y: auto;
+            text-align: left;
+            font-size: 14px;
+        }
+
+        .chat-messages p {
+            margin: 5px 0;
+        }
+
+        .chat-messages .author {
+            font-weight: bold;
+            color: #58a6ff;
+        }
+
+        .chat-messages .sys {
+            color: #888;
+            font-style: italic;
+        }
     </style>
 </head>
+
 <body>
-    <h2>Host: Broadcasting...</h2>
-    <video playsinline autoplay muted></video>
+    <div class="container">
+        <h2>Host a Broadcast</h2>
+        <div class="controls">
+            <input type="text" id="streamName" placeholder="Camera Name (e.g. Phone, Laptop)" value="Laptop Camera">
+            <button id="startBtn">Go Live</button>
+        </div>
+        <video id="localVideo" playsinline autoplay muted></video>
+
+        <div class="chat-container">
+            <div id="chatMessages" class="chat-messages">
+                <p class="sys">Start broadcasting to see viewer comments here...</p>
+            </div>
+        </div>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const peerConnections = {};
-        const video = document.querySelector('video');
+        const video = document.getElementById('localVideo');
+        const startBtn = document.getElementById('startBtn');
+        const streamNameInput = document.getElementById('streamName');
+        const chatMessages = document.getElementById('chatMessages');
         const socket = io.connect(window.location.origin);
-        
-        const config = {
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-        };
 
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-            .then(stream => {
-                video.srcObject = stream;
-                socket.emit("broadcaster");
-            })
-            .catch(error => console.error("Error accessing media devices.", error));
+        const config = {iceServers: [{urls: "stun:stun.l.google.com:19302"}]};
+
+        startBtn.addEventListener('click', () => {
+            const name = streamNameInput.value.trim() || "Camera Feed";
+
+            navigator.mediaDevices.getUserMedia({video: true, audio: true})
+                .then(stream => {
+                    video.srcObject = stream;
+                    socket.emit("broadcaster", {name});
+
+                    startBtn.disabled = true;
+                    streamNameInput.disabled = true;
+                    startBtn.innerText = "Broadcasting Live";
+                    chatMessages.innerHTML = "<p class='sys'>Stream is live. Waiting for viewers...</p>";
+                })
+                .catch(error => alert("Could not access camera: " + error.message));
+        });
+
+        // Listen for chat messages arriving in this broadcaster's room
+        socket.on("chatMessage", data => {
+            if (data.broadcasterId === socket.id) {
+                const p = document.createElement('p');
+                p.innerHTML = `<span class="author">${data.name}:</span> ${data.text}`;
+                chatMessages.appendChild(p);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+        });
 
         socket.on("watcher", id => {
-            // Clean up any lingering zombie connection for this ID just in case
-            if (peerConnections[id]) {
-                peerConnections[id].close();
-            }
-
             const peerConnection = new RTCPeerConnection(config);
             peerConnections[id] = peerConnection;
 
             let stream = video.srcObject;
-            if (stream) {
-                stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
-            }
+            if (stream) stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
 
             peerConnection.onicecandidate = event => {
-                if (event.candidate) {
-                    socket.emit("candidate", id, event.candidate);
-                }
+                if (event.candidate) socket.emit("candidate", id, event.candidate);
             };
 
-            peerConnection
-                .createOffer()
+            peerConnection.createOffer()
                 .then(sdp => peerConnection.setLocalDescription(sdp))
-                .then(() => socket.emit("offer", id, peerConnection.localDescription))
-                .catch(err => console.error("Error creating offer:", err));
+                .then(() => socket.emit("offer", id, peerConnection.localDescription));
         });
 
-        socket.on("answer", (id, description) => {
-            if (peerConnections[id]) {
-                peerConnections[id].setRemoteDescription(description)
-                    .catch(err => console.error("Error setting remote description:", err));
-            }
-        });
-
-        socket.on("candidate", (id, candidate) => {
-            if (peerConnections[id]) {
-                peerConnections[id].addIceCandidate(new RTCIceCandidate(candidate))
-                    .catch(e => console.error("Error adding ice candidate:", e));
-            }
-        });
-
-        socket.on("disconnectPeer", id => {
-            if (id && peerConnections[id]) {
-                peerConnections[id].close();
-                delete peerConnections[id];
-                console.log(`Cleaned up peer connection for: ${id}`);
-            } else if (!id) {
-                // Broadcaster shutdown case
-                Object.keys(peerConnections).forEach(peerId => {
-                    peerConnections[peerId].close();
-                    delete peerConnections[peerId];
-                });
-            }
-        });
-
-        window.onunload = window.onbeforeunload = () => {
-            socket.close();
-        };
+        socket.on("answer", (id, description) => {if (peerConnections[id]) peerConnections[id].setRemoteDescription(description);});
+        socket.on("candidate", (id, candidate) => {if (peerConnections[id]) peerConnections[id].addIceCandidate(new RTCIceCandidate(candidate));});
+        socket.on("disconnectPeer", id => {if (peerConnections[id]) {peerConnections[id].close(); delete peerConnections[id];} });
     </script>
 </body>
+
 </html>
