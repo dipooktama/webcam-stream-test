@@ -1,25 +1,72 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Webcam Viewer</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; text-align: center; }
-        video { width: 100%; max-width: 800px; border-radius: 8px; background: #000; }
+        body {
+            font-family: sans-serif;
+            background: #121212;
+            color: white;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .video-container {
+            position: relative;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+        }
+
+        .unmute-btn {
+            margin-top: 12px;
+            padding: 10px 20px;
+            background: #1f6feb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
     </style>
 </head>
+
 <body>
     <h2>Remote Viewer: Live Feed</h2>
-    <video playsinline autoplay></video>
+    <div class="video-container">
+        <!-- 'muted' is required for browsers to allow autoplay on incoming streams -->
+        <video id="remoteVideo" playsinline autoplay muted></video>
+        <br>
+        <button id="unmuteBtn" class="unmute-btn">Unmute Audio</button>
+    </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         let peerConnection = null;
-        const video = document.querySelector('video');
+        const video = document.getElementById('remoteVideo');
+        const unmuteBtn = document.getElementById('unmuteBtn');
         const socket = io.connect(window.location.origin);
-        
+
+        // Expanded STUN servers for cross-network NAT traversal
         const config = {
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+            iceServers: [
+                {urls: "stun:stun.l.google.com:19302"},
+                {urls: "stun:stun1.l.google.com:19302"},
+                {urls: "stun:stun2.l.google.com:19302"}
+            ]
         };
+
+        unmuteBtn.addEventListener('click', () => {
+            video.muted = !video.muted;
+            unmuteBtn.innerText = video.muted ? "Unmute Audio" : "Mute Audio";
+        });
 
         socket.on("connect", () => {
             socket.emit("watcher");
@@ -35,9 +82,11 @@
             }
 
             peerConnection = new RTCPeerConnection(config);
-            
+
             peerConnection.ontrack = event => {
                 video.srcObject = event.streams[0];
+                // Force play and log any browser autoplay restrictions
+                video.play().catch(e => console.error("Autoplay prevented by browser:", e));
             };
 
             peerConnection.onicecandidate = event => {
@@ -75,4 +124,5 @@
         };
     </script>
 </body>
+
 </html>
